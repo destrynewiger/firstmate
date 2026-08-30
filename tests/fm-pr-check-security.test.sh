@@ -11,12 +11,22 @@ set -u
 . "$ROOT/bin/fm-check-lib.sh"
 
 PR_CHECK="$ROOT/bin/fm-pr-check.sh"
-PR_MERGE="$ROOT/bin/fm-pr-merge.sh"
 POLL="$ROOT/bin/fm-pr-poll.sh"
 WATCH="$ROOT/bin/fm-watch.sh"
 TEARDOWN="$ROOT/bin/fm-teardown.sh"
 REGISTER="$ROOT/bin/fm-check-register.sh"
 TMP_ROOT=$(fm_test_tmproot fm-pr-check-security)
+# The checked-in merge entrypoint is deliberately paused. Exercise the merge
+# bookkeeping mechanics from a disposable source copy whose local policy owner
+# is replaced, not through any shipped environment or test bypass.
+PR_MERGE_FIXTURE="$TMP_ROOT/legacy-merge-security-mechanics"
+mkdir -p "$PR_MERGE_FIXTURE"
+cp -R "$ROOT/bin" "$PR_MERGE_FIXTURE/bin"
+cat > "$PR_MERGE_FIXTURE/bin/fm-landing-policy-lib.sh" <<'SH'
+# Test-only source fixture for merge bookkeeping behind the checked-in pause.
+fm_landing_policy_refusal() { return 0; }
+SH
+PR_MERGE="$PR_MERGE_FIXTURE/bin/fm-pr-merge.sh"
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 REAL_CP=$(command -v cp)
 REAL_MV=$(command -v mv)

@@ -74,8 +74,20 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 fm_git_identity fmtest fmtest@example.invalid
 
-PR_MERGE="$ROOT/bin/fm-pr-merge.sh"
 TMP_ROOT=$(fm_test_tmproot fm-pr-merge-tests)
+# The checked-in command is deliberately paused. Keep the extensive downstream
+# merge-mechanics regression suite useful by copying the source into this
+# disposable fixture and replacing only its policy owner. This is not a shipped
+# test switch: the production library has no environment or test bypass, and
+# tests/fm-task-delivery.test.sh exercises that exact checked-in refusal.
+PR_MERGE_FIXTURE="$TMP_ROOT/legacy-merge-mechanics"
+mkdir -p "$PR_MERGE_FIXTURE"
+cp -R "$ROOT/bin" "$PR_MERGE_FIXTURE/bin"
+cat > "$PR_MERGE_FIXTURE/bin/fm-landing-policy-lib.sh" <<'SH'
+# Test-only source fixture for the merge mechanics behind the checked-in pause.
+fm_landing_policy_refusal() { return 0; }
+SH
+PR_MERGE="$PR_MERGE_FIXTURE/bin/fm-pr-merge.sh"
 BASE_PATH=$PATH
 
 # The GitLab fixture. A placeholder host that resolves nowhere, and a namespace
