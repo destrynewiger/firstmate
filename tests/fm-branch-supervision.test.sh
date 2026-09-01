@@ -49,8 +49,8 @@ test_branch_prompt_is_byte_stable_and_above_cache_floor() {
     *) fail "branch prompt lost the inlined recovery playbook" ;;
   esac
   case "$out_a" in
-    *"Report verdict captain for any outcome that directly answers an explicit captain request."*"This rule is unconditional"*"Keep an unsolicited routine outcome as verdict routine"*"Keep an unchanged fleet review silent"*) ;;
-    *) fail "branch prompt lost the unconditional requested-outcome or routine-silence rules" ;;
+    *"Report verdict captain only for what a human must see:"*"a new product or direction choice;"*"Ordinary implementation details, bug fixes, regression tests, and corrections inside an already approved outcome are verdict routine,"*) ;;
+    *) fail "branch prompt lost the bounded result-loop autonomy rules" ;;
   esac
   pass "branch prompt is byte-stable across homes, cwd, timezone, and time, above the cache floor"
 }
