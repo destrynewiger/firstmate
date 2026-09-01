@@ -50,6 +50,14 @@ trap cleanup EXIT
   cd "$ROOT" || exit
   tar --exclude=.git --exclude=.no-mistakes --exclude=data --exclude=state --exclude=config -cf - .
 ) | (cd "$REMOTE_ROOT" && tar -xf -)
+# This fixture still exercises the host-local update mechanics behind the
+# checked-in pause. Override only that function inside the disposable copied
+# source tree; retain every other landing-policy refusal used by remote spawn.
+cat >> "$REMOTE_ROOT/bin/fm-landing-policy-lib.sh" <<'SH'
+
+# Test-only source fixture for update mechanics behind the checked-in pause.
+fm_landing_policy_refuse_floating_update() { return 0; }
+SH
 cat > "$REMOTE_ROOT/bin/tmux" <<SH
 #!/usr/bin/env bash
 set -u

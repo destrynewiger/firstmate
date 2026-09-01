@@ -1249,7 +1249,7 @@ test_promotion_participates_in_the_lifecycle_lock_before_metadata_resolution() {
     i=$((i + 1))
   done
   [ -e "$lock" ] || fail "could not stage the promotion lifecycle lock"
-  out=$(FM_HOME="$dir/home" "$PROMOTE" rl29 --mode direct-PR --yolo on 2>&1); rc=$?
+  out=$(FM_HOME="$dir/home" "$PROMOTE" rl29 --mode direct-PR --yolo off 2>&1); rc=$?
   kill "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
   expect_code 1 "$rc" "promotion should refuse a concurrent lifecycle action"
@@ -1298,6 +1298,65 @@ test_spawn_relaunch_refuses_an_unrecorded_task() {
   expect_code 1 "$rc" "an unrecorded task should refuse"
   assert_contains "$out" "needs an existing task record" "the refusal should name the missing record"
   pass "fm-spawn --relaunch: an unrecorded task is refused"
+}
+
+test_spawn_relaunch_refuses_unsafe_metadata_before_operational_imports() {
+  local dir home target meta fake_root sink_log before out rc command
+  dir=$(new_case unsafe-meta rl36)
+  home="$dir/home"
+  target="$dir/legacy-yolo.meta"
+  meta="$home/state/rl36.meta"
+  fake_root="$dir/redirected-root"
+  sink_log="$dir/landing-sinks"
+  mkdir -p "$fake_root/bin"
+  : > "$sink_log"
+  printf 'kind=ship\nyolo=on\n' > "$target"
+  ln -s "$target" "$meta"
+  cat > "$fake_root/bin/fm-guard.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'guard %s\n' "$*" >> "$FM_TEST_LANDING_SINK_LOG"
+exit 97
+SH
+  chmod +x "$fake_root/bin/fm-guard.sh"
+  for command in uname git tmux ssh gh gh-axi glab; do
+    cat > "$dir/fakebin/$command" <<'SH'
+#!/usr/bin/env bash
+printf '%s %s\n' "${0##*/}" "$*" >> "$FM_TEST_LANDING_SINK_LOG"
+exit 97
+SH
+    chmod +x "$dir/fakebin/$command"
+  done
+
+  before=$(find "$home/state" -print | LC_ALL=C sort)
+  out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$fake_root" \
+    FM_STATE_OVERRIDE="$home/state" FM_SPAWN_NO_GUARD='' \
+    FM_TEST_LANDING_SINK_LOG="$sink_log" "$SPAWN" rl36 --relaunch 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "a symlinked relaunch record should refuse"
+  assert_contains "$out" "relaunch metadata path is not a regular non-symlink file" \
+    "the symlink refusal did not name the unsafe metadata shape"
+  [ "$(find "$home/state" -print | LC_ALL=C sort)" = "$before" ] \
+    || fail "the symlink refusal created or removed state before stopping"
+  [ -L "$meta" ] && [ "$(cat "$target")" = $'kind=ship\nyolo=on' ] \
+    || fail "the symlink refusal changed the link or its yolo target"
+  [ ! -s "$sink_log" ] \
+    || fail "unsafe relaunch metadata reached an import, guard, network, or backend sink: $(cat "$sink_log")"
+
+  rm "$meta"
+  mkdir "$meta"
+  before=$(find "$home/state" -print | LC_ALL=C sort)
+  out=$(env PATH="$dir/fakebin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$fake_root" \
+    FM_STATE_OVERRIDE="$home/state" FM_SPAWN_NO_GUARD='' \
+    FM_TEST_LANDING_SINK_LOG="$sink_log" "$SPAWN" rl36 --relaunch 2>&1)
+  rc=$?
+  expect_code 1 "$rc" "a directory-shaped relaunch record should refuse"
+  assert_contains "$out" "relaunch metadata path is not a regular non-symlink file" \
+    "the non-regular refusal did not name the unsafe metadata shape"
+  [ "$(find "$home/state" -print | LC_ALL=C sort)" = "$before" ] \
+    || fail "the non-regular refusal changed state before stopping"
+  [ ! -s "$sink_log" ] \
+    || fail "non-regular relaunch metadata reached an import, guard, network, or backend sink: $(cat "$sink_log")"
+  pass "fm-spawn --relaunch: unsafe metadata paths refuse before imports, guards, network, or backends"
 }
 
 test_spawn_relaunch_refuses_a_pane_outside_the_worktree() {
@@ -1357,4 +1416,5 @@ test_promotion_participates_in_the_lifecycle_lock_before_metadata_resolution
 test_spawn_relaunch_refuses_a_live_agent
 test_spawn_relaunch_refuses_contradicting_flags
 test_spawn_relaunch_refuses_an_unrecorded_task
+test_spawn_relaunch_refuses_unsafe_metadata_before_operational_imports
 test_spawn_relaunch_refuses_a_pane_outside_the_worktree

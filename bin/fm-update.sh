@@ -35,10 +35,10 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 SECONDMATES_MD="$FM_HOME/data/secondmates.md"
+# shellcheck source=bin/fm-landing-policy-lib.sh
+. "$SCRIPT_DIR/fm-landing-policy-lib.sh"
 # shellcheck source=bin/fm-ff-lib.sh
 . "$SCRIPT_DIR/fm-ff-lib.sh"
-
-"$SCRIPT_DIR/fm-guard.sh" || true
 
 usage() { echo "usage: fm-update.sh [--help]" >&2; }
 
@@ -47,6 +47,8 @@ if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
   exit 0
 fi
 [ $# -eq 0 ] || { usage; exit 1; }
+fm_landing_policy_refuse_floating_update || exit 1
+"$SCRIPT_DIR/fm-guard.sh" || true
 
 # --- main firstmate repo ---------------------------------------------------
 

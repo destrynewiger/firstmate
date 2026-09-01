@@ -109,6 +109,7 @@ init_changed_fixture_repo() {
     fm-afk-pi-herdr-return-e2e.test.sh \
     fm-backend.test.sh \
     fm-pr-merge.test.sh \
+    fm-task-delivery.test.sh \
     fm-pi-watch-extension.test.sh \
     fm-afk-return.test.sh \
     fm-bearings-snapshot.test.sh \
@@ -122,6 +123,9 @@ init_changed_fixture_repo() {
   : >"$repo/tests/lib.sh"
   : >"$repo/tests/fm-backend-herdr-eventwait.test.py"
   : >"$repo/bin/fm-supervisor-target-lib.sh"
+  : >"$repo/bin/fm-pr-merge.sh"
+  : >"$repo/bin/fm-merge-local.sh"
+  : >"$repo/bin/fm-update.sh"
   : >"$repo/bin/unmapped-source.sh"
   # A shared helper with no curated family of its own, named by exactly ONE
   # script of the expensive real-Herdr family and consumed by one curated
@@ -226,6 +230,21 @@ test_changed_dependency_selection_and_unmapped_failure() {
   assert_contains "$listed" "tests/fm-afk-return.test.sh" "supervisor target selects afk coverage"
   git -C "$repo" add bin/fm-supervisor-target-lib.sh
   git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm supervisor-change
+
+  printf '\n' >>"$repo/bin/fm-pr-merge.sh"
+  printf '\n' >>"$repo/bin/fm-merge-local.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-pr-merge.test.sh" "landing callers retain their PR-forge coverage"
+  assert_contains "$listed" "tests/fm-task-delivery.test.sh" "landing callers select the checked-in pause regression"
+  git -C "$repo" add bin/fm-pr-merge.sh bin/fm-merge-local.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm landing-caller-change
+
+  printf '\n' >>"$repo/bin/fm-update.sh"
+  listed=$(cd "$repo" && bin/fm-test-run.sh --list --changed --base HEAD)
+  assert_contains "$listed" "tests/fm-session-start.test.sh" "update retains its session-bootstrap coverage"
+  assert_contains "$listed" "tests/fm-task-delivery.test.sh" "update selects the reviewed-pin refusal regression"
+  git -C "$repo" add bin/fm-update.sh
+  git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm update-caller-change
 
   printf '\n' >>"$repo/.agents/skills/example/SKILL.md"
   printf '\n' >>"$repo/.claude/settings.json"

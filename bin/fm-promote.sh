@@ -25,18 +25,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
-# shellcheck source=bin/fm-dod-lib.sh
-. "$SCRIPT_DIR/fm-dod-lib.sh"
-# shellcheck source=bin/fm-pr-lib.sh
-. "$SCRIPT_DIR/fm-pr-lib.sh"
-# shellcheck source=bin/fm-wake-lib.sh
-. "$SCRIPT_DIR/fm-wake-lib.sh"
-# shellcheck source=bin/fm-public-followup-lib.sh
-. "$SCRIPT_DIR/fm-public-followup-lib.sh"
-# shellcheck source=bin/fm-secondmate-parent-lib.sh
-. "$SCRIPT_DIR/fm-secondmate-parent-lib.sh"
-# shellcheck source=bin/fm-secondmate-registry-lib.sh
-. "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
+# shellcheck source=bin/fm-landing-policy-lib.sh
+. "$SCRIPT_DIR/fm-landing-policy-lib.sh"
 
 MODE=
 YOLO=
@@ -85,6 +75,23 @@ case "$YOLO" in
   on|off) ;;
   *) echo "error: --yolo must be on or off (got '$YOLO')" >&2; exit 1 ;;
 esac
+fm_landing_policy_require_yolo_off "$YOLO" || exit 1
+
+# Defer the operational libraries until the checked-in policy has accepted the
+# request. fm-wake-lib.sh creates STATE at source time, so loading it any earlier
+# would make a refused yolo promotion observably mutating.
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
+# shellcheck source=bin/fm-pr-lib.sh
+. "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-public-followup-lib.sh
+. "$SCRIPT_DIR/fm-public-followup-lib.sh"
+# shellcheck source=bin/fm-secondmate-parent-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-parent-lib.sh"
+# shellcheck source=bin/fm-secondmate-registry-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
 
 ID=${POS[0]}
 fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; }

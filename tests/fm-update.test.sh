@@ -22,12 +22,22 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-UPDATE="$ROOT/bin/fm-update.sh"
-
 # Deterministic, isolated git identity for fixture commits.
 fm_git_identity fmtest fmtest@example.com
 
 TMP_ROOT=$(fm_test_tmproot fm-update-tests)
+# The checked-in command is deliberately paused. Keep the fast-forward safety
+# suite useful by copying the source into this disposable fixture and replacing
+# only its policy owner. This adds no production or environment bypass; the
+# exact checked-in refusal is exercised by tests/fm-task-delivery.test.sh.
+UPDATE_FIXTURE="$TMP_ROOT/legacy-update-mechanics"
+mkdir -p "$UPDATE_FIXTURE"
+cp -R "$ROOT/bin" "$UPDATE_FIXTURE/bin"
+cat > "$UPDATE_FIXTURE/bin/fm-landing-policy-lib.sh" <<'SH'
+# Test-only source fixture for update mechanics behind the checked-in pause.
+fm_landing_policy_refuse_floating_update() { return 0; }
+SH
+UPDATE="$UPDATE_FIXTURE/bin/fm-update.sh"
 
 # Build a fresh world: a bare origin seeded with one commit, a firstmate repo
 # clone checked out on main, and a home dir with state/ and data/. Echoes the

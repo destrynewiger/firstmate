@@ -21,6 +21,9 @@ SPAWN="$ROOT/bin/fm-spawn.sh"
 BRIEF="$ROOT/bin/fm-brief.sh"
 PROMOTE="$ROOT/bin/fm-promote.sh"
 PROJECT_MODE="$ROOT/bin/fm-project-mode.sh"
+PR_MERGE="$ROOT/bin/fm-pr-merge.sh"
+MERGE_LOCAL="$ROOT/bin/fm-merge-local.sh"
+UPDATE="$ROOT/bin/fm-update.sh"
 TMP_ROOT=$(fm_test_tmproot fm-task-delivery)
 
 # A home with one registered project, one project directory, and a fake tmux that
@@ -231,7 +234,7 @@ test_promote_requires_and_records_the_delivery_contract() {
   blocked_data="$home/data-blocked"
   printf 'not a directory\n' > "$blocked_data"
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$blocked_data" \
-    "$PROMOTE" promote-d1 --mode direct-PR --yolo on 2>&1)
+    "$PROMOTE" promote-d1 --mode direct-PR --yolo off 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "promotion without writable instruction storage should exit non-zero"
   assert_grep 'kind=scout' "$meta" "failed instruction publication still promoted the task"
@@ -241,7 +244,7 @@ test_promote_requires_and_records_the_delivery_contract() {
   instructions_path="$home/data/promote-d1/ship-instructions.md"
   mkdir -p "$instructions_path"
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
-    "$PROMOTE" promote-d1 --mode direct-PR --yolo on 2>&1)
+    "$PROMOTE" promote-d1 --mode direct-PR --yolo off 2>&1)
   status=$?
   [ "$status" -ne 0 ] || fail "promotion over an instruction directory should exit non-zero"
   assert_contains "$out" "ship instructions path is a directory" \
@@ -251,12 +254,12 @@ test_promote_requires_and_records_the_delivery_contract() {
   assert_no_grep '^yolo=' "$meta" "invalid instruction destination recorded a merge posture"
   rmdir "$instructions_path"
 
-  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode direct-PR --yolo on 2>&1)
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$PROMOTE" promote-d1 --mode direct-PR --yolo off 2>&1)
   status=$?
   expect_code 0 "$status" "a promotion carrying both flags should succeed"
   assert_grep 'kind=ship' "$meta" "promotion did not restore ship teardown protection"
   assert_grep 'mode=direct-PR' "$meta" "promotion did not record the decided delivery mode"
-  assert_grep 'yolo=on' "$meta" "promotion did not record the decided merge posture"
+  assert_grep 'yolo=off' "$meta" "promotion did not record the decided merge posture"
   assert_contains "$out" "ship instructions for mode=direct-PR" "promotion hint did not carry the decided mode"
   [ "$(grep -c '^mode=' "$meta")" = 1 ] || fail "promotion left more than one mode= line in the task record"
   pass "fm-promote: promotion requires the delivery contract and records it exactly once"
@@ -380,6 +383,243 @@ EOF
   pass "fm-project-mode: the conditional policy is accepted, mapped for mechanical callers, and readable raw"
 }
 
+# This distribution is intentionally unable to land work. Every public input
+# that could grant merge authority must refuse from the checked-in source policy
+# before a guard, backend, forge, git mutation, or floating self-update runs.
+test_checked_in_pause_refuses_every_public_landing_input() {
+  local rec home proj fakebin out status before sink_log fake_root state_files
+  local pristine_home pristine_promote command url
+  local FM_LANDING_POLICY=allow FM_LANDING_ALLOW=1 FM_ALLOW_LANDING=1
+  export FM_LANDING_POLICY FM_LANDING_ALLOW FM_ALLOW_LANDING
+  rec=$(make_home landing-pause)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  sink_log="$TMP_ROOT/landing-pause/sinks.log"
+  fake_root="$TMP_ROOT/landing-pause/redirected-root"
+  mkdir -p "$fake_root/bin"
+  : > "$sink_log"
+  for command in git gh gh-axi glab jq; do
+    cat > "$fakebin/$command" <<'SH'
+#!/usr/bin/env bash
+printf '%s %s\n' "${0##*/}" "$*" >> "$FM_TEST_LANDING_SINK_LOG"
+exit 97
+SH
+    chmod +x "$fakebin/$command"
+  done
+  cat > "$fake_root/bin/fm-guard.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'guard %s\n' "$*" >> "$FM_TEST_LANDING_SINK_LOG"
+exit 97
+SH
+  chmod +x "$fake_root/bin/fm-guard.sh"
+
+  # A fresh yolo request on a home with no state directory proves that merely
+  # loading the refusal path does not create Firstmate state.
+  pristine_home="$TMP_ROOT/landing-pause/pristine-home"
+  mkdir -p "$pristine_home"
+  out=$(FM_ROOT_OVERRIDE="$fake_root" FM_HOME="$pristine_home" \
+    FM_SPAWN_NO_GUARD='' FM_TEST_LANDING_SINK_LOG="$sink_log" \
+    PATH="$fakebin:$PATH" "$SPAWN" landing-pristine-p0 "$proj" claude \
+    --mode no-mistakes --yolo on 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a pristine fresh yolo spawn should refuse"
+  assert_contains "$out" "--yolo on is disabled by checked-in Firstmate policy paused-v1" \
+    "pristine fresh spawn refusal did not name the checked-in pause"
+  assert_absent "$pristine_home/state" "pristine fresh yolo refusal created state"
+
+  # Promotion also reaches its checked-in gate before sourcing the wake/locking
+  # libraries, even when its home has never had state.
+  pristine_promote="$TMP_ROOT/landing-pause/pristine-promote"
+  mkdir -p "$pristine_promote"
+  out=$(FM_ROOT_OVERRIDE="$fake_root" FM_HOME="$pristine_promote" \
+    FM_TEST_LANDING_SINK_LOG="$sink_log" PATH="$fakebin:$PATH" \
+    "$PROMOTE" landing-pristine-p0 --mode no-mistakes --yolo on 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a pristine yolo promotion should refuse"
+  assert_contains "$out" "--yolo on is disabled by checked-in Firstmate policy paused-v1" \
+    "pristine promotion refusal did not name the checked-in pause"
+  assert_absent "$pristine_promote/state" "pristine yolo promotion created state"
+
+  write_brief "$home" landing-fresh-p1 no-mistakes
+  out=$(FM_TEST_LANDING_SINK_LOG="$sink_log" \
+    run_spawn "$home" "$fakebin" landing-fresh-p1 "$proj" claude \
+    --mode no-mistakes --yolo on)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a fresh yolo spawn should refuse"
+  assert_contains "$out" "--yolo on is disabled by checked-in Firstmate policy paused-v1" \
+    "fresh spawn refusal did not name the checked-in pause"
+  assert_absent "$home/state/landing-fresh-p1.meta" "refused fresh yolo spawn wrote task metadata"
+
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" \
+    FM_SPAWN_NO_GUARD=1 FM_TEST_LANDING_SINK_LOG="$sink_log" \
+    PATH="$fakebin:$PATH" "$SPAWN" \
+    "landing-batch-a-p2=$proj" "landing-batch-b-p3=$proj" \
+    --mode no-mistakes --yolo on 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a yolo batch should refuse"
+  assert_contains "$out" "--yolo on is disabled by checked-in Firstmate policy paused-v1" \
+    "batch refusal did not name the checked-in pause"
+  assert_not_contains "$out" "batch:" "paused yolo batch dispatched a child before refusing"
+  assert_absent "$home/state/landing-batch-a-p2.meta" "paused batch wrote first-child metadata"
+  assert_absent "$home/state/landing-batch-b-p3.meta" "paused batch wrote second-child metadata"
+
+  fm_write_meta "$home/state/landing-relaunch-p4.meta" \
+    window=fm-landing-relaunch-p4 worktree="$proj" project="$proj" \
+    harness=claude kind=ship mode=no-mistakes yolo=on
+  before="$TMP_ROOT/landing-pause/relaunch.meta.before"
+  cp "$home/state/landing-relaunch-p4.meta" "$before"
+  out=$(FM_ROOT_OVERRIDE="$fake_root" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_CONFIG_OVERRIDE="$home/config" FM_TEST_LANDING_SINK_LOG="$sink_log" \
+    PATH="$fakebin:$PATH" "$SPAWN" landing-relaunch-p4 --relaunch 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a legacy yolo relaunch should refuse"
+  cmp -s "$before" "$home/state/landing-relaunch-p4.meta" \
+    || fail "legacy yolo relaunch changed its task record"
+  assert_contains "$out" "--yolo on is disabled by checked-in Firstmate policy paused-v1" \
+    "legacy relaunch refusal did not name the checked-in pause"
+
+  fm_write_meta "$home/state/landing-promote-p5.meta" \
+    window=fm-landing-promote-p5 worktree="$proj" project="$proj" \
+    harness=claude kind=scout
+  before="$TMP_ROOT/landing-pause/promote.meta.before"
+  cp "$home/state/landing-promote-p5.meta" "$before"
+  out=$(FM_ROOT_OVERRIDE="$fake_root" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
+    FM_TEST_LANDING_SINK_LOG="$sink_log" PATH="$fakebin:$PATH" \
+    "$PROMOTE" landing-promote-p5 --mode no-mistakes --yolo on 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a yolo promotion should refuse"
+  cmp -s "$before" "$home/state/landing-promote-p5.meta" \
+    || fail "paused promotion changed its task record"
+  assert_contains "$out" "--yolo on is disabled by checked-in Firstmate policy paused-v1" \
+    "promotion refusal did not name the checked-in pause"
+  assert_absent "$home/data/landing-promote-p5" "paused promotion wrote ship instructions"
+
+  fm_write_meta "$home/state/landing-pr-p6.meta" \
+    window=fm-landing-pr-p6 worktree="$proj" project="$proj" \
+    harness=claude kind=ship mode=no-mistakes yolo=off
+  before="$TMP_ROOT/landing-pause/pr.meta.before"
+  cp "$home/state/landing-pr-p6.meta" "$before"
+  for url in \
+    https://github.com/example/project/pull/1 \
+    https://gitlab.example/group/project/-/merge_requests/1; do
+    out=$(FM_ROOT_OVERRIDE="$fake_root" FM_HOME="$home" \
+      FM_STATE_OVERRIDE="$home/state" FM_TEST_LANDING_SINK_LOG="$sink_log" \
+      PATH="$fakebin:$PATH" "$PR_MERGE" landing-pr-p6 "$url" 2>&1)
+    status=$?
+    [ "$status" -ne 0 ] || fail "PR landing should refuse for $url"
+    assert_contains "$out" "landing is disabled by checked-in Firstmate policy paused-v1" \
+      "PR landing refusal did not name the checked-in pause"
+    cmp -s "$before" "$home/state/landing-pr-p6.meta" \
+      || fail "paused PR landing changed task metadata for $url"
+  done
+  assert_absent "$home/state/landing-pr-p6.check.sh" "paused PR landing armed a poll"
+
+  fm_write_meta "$home/state/landing-local-p7.meta" \
+    window=fm-landing-local-p7 worktree="$proj" project="$proj" \
+    harness=claude kind=ship mode=local-only yolo=off
+  before="$TMP_ROOT/landing-pause/local.meta.before"
+  cp "$home/state/landing-local-p7.meta" "$before"
+  out=$(FM_ROOT_OVERRIDE="$fake_root" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_TEST_LANDING_SINK_LOG="$sink_log" \
+    PATH="$fakebin:$PATH" "$MERGE_LOCAL" landing-local-p7 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "local landing should refuse"
+  assert_contains "$out" "landing is disabled by checked-in Firstmate policy paused-v1" \
+    "local landing refusal did not name the checked-in pause"
+  cmp -s "$before" "$home/state/landing-local-p7.meta" \
+    || fail "paused local landing changed task metadata"
+
+  out=$(FM_ROOT_OVERRIDE="$proj" FM_HOME="$home" \
+    FM_STATE_OVERRIDE="$home/state" FM_TEST_LANDING_SINK_LOG="$sink_log" \
+    PATH="$fakebin:$PATH" "$UPDATE" 2>&1)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a floating update should refuse"
+  assert_contains "$out" "/updatefirstmate is disabled by checked-in Firstmate policy paused-v1" \
+    "floating update refusal did not name the checked-in pause"
+
+  [ ! -s "$sink_log" ] \
+    || fail "a paused landing path reached a guard, backend, forge, git, or network sink: $(cat "$sink_log")"
+  state_files=$(find "$home/state" -mindepth 1 -maxdepth 1 -type f -print | LC_ALL=C sort)
+  [ "$state_files" = "$(printf '%s\n' \
+    "$home/state/landing-local-p7.meta" \
+    "$home/state/landing-pr-p6.meta" \
+    "$home/state/landing-promote-p5.meta" \
+    "$home/state/landing-relaunch-p4.meta" | LC_ALL=C sort)" ] \
+    || fail "paused landing created unexpected durable state: $state_files"
+  pass "checked-in landing pause refuses yolo, PR/local landing, and floating updates before mutation or network"
+}
+
+# Mechanical canaries make a newly introduced merge sink, a caller that stops
+# sourcing the checked-in policy, or a gate moved below an effectful operation a
+# review-visible test failure instead of a silent authority bypass.
+test_landing_policy_static_sink_inventory() {
+  local file gate_line sink_line source sink_paths
+  for file in fm-spawn.sh fm-promote.sh fm-pr-merge.sh fm-merge-local.sh fm-update.sh; do
+    grep -qF '. "$SCRIPT_DIR/fm-landing-policy-lib.sh"' "$ROOT/bin/$file" \
+      || fail "$file does not source the landing policy through SCRIPT_DIR"
+  done
+  grep -qF 'FM_LANDING_POLICY="paused-v1"' "$ROOT/bin/fm-landing-policy-lib.sh" \
+    || fail "the checked-in policy is no longer hard-coded paused-v1"
+  ! grep -Eq 'FM_(LANDING_)?(ALLOW|BYPASS)|FM_TEST' "$ROOT/bin/fm-landing-policy-lib.sh" \
+    || fail "the production landing policy contains an environment or test bypass"
+
+  gate_line=$(grep -nF 'fm_landing_policy_refusal || exit 1' "$ROOT/bin/fm-pr-merge.sh" | head -1 | cut -d: -f1)
+  for source in 'record_pr_metadata || exit 1' 'gh-axi pr merge' 'glab mr merge'; do
+    sink_line=$(grep -nF "$source" "$ROOT/bin/fm-pr-merge.sh" | tail -1 | cut -d: -f1)
+    [ "$gate_line" -lt "$sink_line" ] \
+      || fail "PR landing policy moved below sink: $source"
+  done
+
+  gate_line=$(grep -nF 'fm_landing_policy_refusal || exit 1' "$ROOT/bin/fm-merge-local.sh" | head -1 | cut -d: -f1)
+  sink_line=$(grep -nF 'git -C "$PROJ"' "$ROOT/bin/fm-merge-local.sh" | head -1 | cut -d: -f1)
+  [ "$gate_line" -lt "$sink_line" ] || fail "local landing policy moved below git"
+
+  gate_line=$(grep -nF 'fm_landing_policy_require_yolo_off "$YOLO"' "$ROOT/bin/fm-promote.sh" | head -1 | cut -d: -f1)
+  for source in '. "$SCRIPT_DIR/fm-wake-lib.sh"' 'CONTROL_LOCK='; do
+    sink_line=$(grep -nF "$source" "$ROOT/bin/fm-promote.sh" | head -1 | cut -d: -f1)
+    [ "$gate_line" -lt "$sink_line" ] \
+      || fail "promotion yolo policy moved below operational source: $source"
+  done
+
+  [ "$(grep -cF 'fm_landing_policy_require_yolo_off "$YOLO"' "$ROOT/bin/fm-spawn.sh")" -eq 2 ] \
+    || fail "spawn must check both fresh and adopted yolo posture"
+  gate_line=$(grep -nF 'fm_landing_policy_require_yolo_off "$YOLO"' "$ROOT/bin/fm-spawn.sh" | head -1 | cut -d: -f1)
+  for source in '. "$SCRIPT_DIR/fm-wake-lib.sh"' '"$FM_ROOT/bin/fm-guard.sh"' 'FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh"'; do
+    sink_line=$(grep -nF "$source" "$ROOT/bin/fm-spawn.sh" | head -1 | cut -d: -f1)
+    [ "$gate_line" -lt "$sink_line" ] \
+      || fail "fresh spawn yolo policy moved below operational source: $source"
+  done
+  gate_line=$(grep -nF 'fm_landing_policy_refuse_meta_yolo_on "$STATE/${POS[0]}.meta"' "$ROOT/bin/fm-spawn.sh" | head -1 | cut -d: -f1)
+  for source in '. "$SCRIPT_DIR/fm-wake-lib.sh"' '"$FM_ROOT/bin/fm-guard.sh"'; do
+    sink_line=$(grep -nF "$source" "$ROOT/bin/fm-spawn.sh" | head -1 | cut -d: -f1)
+    [ "$gate_line" -lt "$sink_line" ] \
+      || fail "relaunch metadata preflight moved below operational source: $source"
+  done
+
+  gate_line=$(grep -nF 'fm_landing_policy_refuse_floating_update || exit 1' "$ROOT/bin/fm-update.sh" | head -1 | cut -d: -f1)
+  sink_line=$(grep -nF 'ff_target "$FM_ROOT"' "$ROOT/bin/fm-update.sh" | head -1 | cut -d: -f1)
+  [ "$gate_line" -lt "$sink_line" ] || fail "floating-update policy moved below fast-forward"
+
+  sink_paths=$(awk '
+    /^[[:space:]]*#/ { next }
+    /gh-axi pr merge/ { print FILENAME ":gh-axi" }
+    /glab mr merge/ { print FILENAME ":glab" }
+    /git -C .* merge --ff-only/ { print FILENAME ":git-ff" }
+  ' "$ROOT"/bin/*.sh | sed "s#^$ROOT/bin/##" | LC_ALL=C sort -u)
+  [ "$sink_paths" = "$(printf '%s\n' \
+    'fm-ff-lib.sh:git-ff' \
+    'fm-fleet-sync.sh:git-ff' \
+    'fm-merge-local.sh:git-ff' \
+    'fm-pr-merge.sh:gh-axi' \
+    'fm-pr-merge.sh:glab')" ] \
+    || fail "landing sink inventory changed without a policy review: $sink_paths"
+  pass "landing policy is source-relative and statically precedes every known elevated task sink"
+}
+
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
@@ -388,4 +628,6 @@ test_scout_records_no_delivery_posture
 test_promote_requires_and_records_the_delivery_contract
 test_promotion_delivers_the_real_definition_of_done
 test_project_mode_maps_the_conditional_policy
+test_checked_in_pause_refuses_every_public_landing_input
+test_landing_policy_static_sink_inventory
 echo "# all fm-task-delivery tests passed"

@@ -245,36 +245,19 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 PROJECTS="${FM_PROJECTS_OVERRIDE:-$FM_HOME/projects}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 SUB_HOME_MARKER=".fm-secondmate-home"
-# shellcheck source=bin/fm-ff-lib.sh
-. "$SCRIPT_DIR/fm-ff-lib.sh"
-# shellcheck source=bin/fm-wake-lib.sh
-. "$SCRIPT_DIR/fm-wake-lib.sh"
-# shellcheck source=bin/fm-secondmate-nudge-lib.sh
-. "$SCRIPT_DIR/fm-secondmate-nudge-lib.sh"
-# shellcheck source=bin/fm-config-inherit-lib.sh
-. "$SCRIPT_DIR/fm-config-inherit-lib.sh"
-# shellcheck source=bin/fm-backend.sh
-. "$SCRIPT_DIR/fm-backend.sh"
-# shellcheck source=bin/fm-control-lib.sh
-. "$SCRIPT_DIR/fm-control-lib.sh"
-# shellcheck source=bin/fm-gate-refuse-lib.sh
-. "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
-# shellcheck source=bin/fm-busy-lib.sh
-. "$SCRIPT_DIR/fm-busy-lib.sh"
-# shellcheck source=bin/fm-cursor-lib.sh
-. "$SCRIPT_DIR/fm-cursor-lib.sh"
+# Only side-effect-free validation/refusal libraries load before the landing
+# preflight. In particular, fm-wake-lib.sh creates STATE when sourced.
+# shellcheck source=bin/fm-landing-policy-lib.sh
+. "$SCRIPT_DIR/fm-landing-policy-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-trace-context-lib.sh
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
-# shellcheck source=bin/fm-remote-readiness-lib.sh
-. "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+# shellcheck source=bin/fm-gate-refuse-lib.sh
+. "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
-# Skip the watcher guard when re-exec'd for one pair of a batch (FM_SPAWN_NO_GUARD is
-# set by the batch loop below), so the guard runs once for the batch, not once per pair.
-[ -n "${FM_SPAWN_NO_GUARD:-}" ] || "$FM_ROOT/bin/fm-guard.sh" || true
 KIND=ship
 KIND_SET=0
 HARNESS_ARG=
@@ -393,6 +376,7 @@ else
       on|off) ;;
       *) echo "error: --yolo must be on or off (got '$YOLO')" >&2; exit 1 ;;
     esac
+    fm_landing_policy_require_yolo_off "$YOLO" || exit 1
   else
     [ "$MODE_SET" -eq 0 ] || {
       echo "error: --mode applies only to ship spawns; a scout delivers a report and a secondmate records its own fixed posture" >&2
@@ -404,6 +388,40 @@ else
     }
   fi
 fi
+
+# A relaunch accepts no delivery flags, so its merge posture comes from the
+# existing task record.  Refuse a legacy yolo=on record before the watcher guard,
+# lifecycle locks, backend reads, or any other relaunch work.  The locked adoption
+# path rechecks the parsed value below, closing a concurrent off -> on change.
+if [ "$RELAUNCH" -eq 1 ] && [ "${#POS[@]}" -eq 1 ] \
+    && fm_task_id_creation_valid "${POS[0]}"; then
+  fm_landing_policy_refuse_meta_yolo_on "$STATE/${POS[0]}.meta" || exit 1
+fi
+
+# Operational libraries load only after the checked-in landing preflight. Keep
+# this order aligned with the historical dependency order for accepted paths.
+# shellcheck source=bin/fm-ff-lib.sh
+. "$SCRIPT_DIR/fm-ff-lib.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+. "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-secondmate-nudge-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-nudge-lib.sh"
+# shellcheck source=bin/fm-config-inherit-lib.sh
+. "$SCRIPT_DIR/fm-config-inherit-lib.sh"
+# shellcheck source=bin/fm-backend.sh
+. "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-control-lib.sh
+. "$SCRIPT_DIR/fm-control-lib.sh"
+# shellcheck source=bin/fm-busy-lib.sh
+. "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-cursor-lib.sh
+. "$SCRIPT_DIR/fm-cursor-lib.sh"
+# shellcheck source=bin/fm-remote-readiness-lib.sh
+. "$SCRIPT_DIR/fm-remote-readiness-lib.sh"
+
+# Skip the watcher guard when re-exec'd for one pair of a batch (FM_SPAWN_NO_GUARD is
+# set by the batch loop below), so the guard runs once for the batch, not once per pair.
+[ -n "${FM_SPAWN_NO_GUARD:-}" ] || "$FM_ROOT/bin/fm-guard.sh" || true
 
 spawn_remote_secondmate() {
   local id=$1 remote host root home harness positional model effort backend out rc meta tmp
@@ -1037,6 +1055,9 @@ if [ "$RELAUNCH" -eq 1 ]; then
   [ -n "$KIND" ] || KIND=ship
   MODE=$(fm_meta_get "$RELAUNCH_META" mode)
   YOLO=$(fm_meta_get "$RELAUNCH_META" yolo)
+  if [ "$KIND" = ship ] || [ "$YOLO" = on ]; then
+    fm_landing_policy_require_yolo_off "$YOLO" || exit 1
+  fi
   RELAUNCH_WT=$(fm_meta_get "$RELAUNCH_META" worktree)
   [ -n "$RELAUNCH_WT" ] && [ -d "$RELAUNCH_WT" ] || {
     echo "error: task $ID's recorded worktree '${RELAUNCH_WT:-none}' is missing; refusing to relaunch without the local copy its work lives in" >&2

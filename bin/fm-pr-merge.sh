@@ -73,8 +73,12 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# Source before canonical parsing: this side-effect-free library loads
+# fm-pr-lib.sh and therefore initializes its parse globals.
 # shellcheck source=bin/fm-merge-outcome-lib.sh
 . "$SCRIPT_DIR/fm-merge-outcome-lib.sh"
+# shellcheck source=bin/fm-landing-policy-lib.sh
+. "$SCRIPT_DIR/fm-landing-policy-lib.sh"
 # Role partition: merging is MAIN-owned; the Pi supervision branch reports the
 # green PR and never merges (contract: bin/fm-lease-lib.sh; no-op in homes
 # without a branch actor).
@@ -187,6 +191,7 @@ reject_head_overrides() {
 
 reject_repo_overrides "$@" || exit 1
 [ "$PROVIDER" != gitlab ] || reject_head_overrides "$@" || exit 1
+fm_landing_policy_refusal || exit 1
 
 # Task-derived paths are constructed only after the canonical ID validation.
 META="$STATE/$ID.meta"
